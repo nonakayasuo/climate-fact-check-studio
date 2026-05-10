@@ -32,15 +32,14 @@ export function StudioApp() {
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [isLogsLoading, setIsLogsLoading] = useState(true);
+  const [isLogSaving, setIsLogSaving] = useState(false);
+  const [isDeletingLogs, setIsDeletingLogs] = useState(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("climate-studio-logs");
-    if (saved) setLogs(JSON.parse(saved) as ResearchLog[]);
+    void fetchLogs();
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("climate-studio-logs", JSON.stringify(logs));
-  }, [logs]);
 
   const averageTrust = logs.length
     ? (logs.reduce((sum, log) => sum + log.human_rating_trust, 0) / logs.length).toFixed(1)
@@ -86,12 +85,32 @@ export function StudioApp() {
     setBody(sampleArticle.body);
   }
 
-  function saveLog() {
-    if (!analysis) return;
+  async function fetchLogs() {
+    setIsLogsLoading(true);
+    setLogsError(null);
+    try {
+      const response = await fetch("/api/research-logs");
+      const payload = (await response.json()) as { logs?: ResearchLog[]; message?: string };
+      if (!response.ok) {
+        setLogsError(payload.message ?? "ログ取得に失敗しました。");
+        return;
+      }
+      setLogs(payload.logs ?? []);
+    } catch {
+      setLogsError("ログ取得に失敗しました。再試行してください。");
+    } finally {
+      setIsLogsLoading(false);
+    }
+  }
 
-    const log: ResearchLog = {
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
+  async function saveLog() {
+    if (!analysis) return;
+    setIsLogSaving(true);
+    setLogsError(null);
+
+    const log = {
+      id: undefined,
+      timestamp: undefined,
       input_text: analysis.body,
       title: analysis.title,
       media_type: analysis.mediaType,
@@ -107,9 +126,25 @@ export function StudioApp() {
       revision_reason: selectedReasons
     };
 
-    setLogs((currentLogs) => [log, ...currentLogs]);
-    setHumanRevision("");
-    setSelectedReasons([]);
+    try {
+      const response = await fetch("/api/research-logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ log })
+      });
+      const payload = (await response.json()) as { log?: ResearchLog; message?: string };
+      if (!response.ok || !payload.log) {
+        setLogsError(payload.message ?? "ログ保存に失敗しました。入力内容を確認して再試行してください。");
+        return;
+      }
+      setLogs((currentLogs) => [payload.log as ResearchLog, ...currentLogs]);
+      setHumanRevision("");
+      setSelectedReasons([]);
+    } catch {
+      setLogsError("ログ保存に失敗しました。ネットワーク接続を確認して再試行してください。");
+    } finally {
+      setIsLogSaving(false);
+    }
   }
 
   function exportCsv() {
@@ -120,6 +155,34 @@ export function StudioApp() {
     anchor.download = "climate-fact-check-logs.csv";
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function deleteAllLogs() {
+    if (!logs.length || isDeletingLogs) return;
+    const confirmation = window.prompt(
+      `全ユーザー分のログ ${logs.length} 件を削除します。この操作は取り消せません。実行する場合は DELETE と入力してください。`
+    );
+    if (confirmation !== "DELETE") return;
+
+    setIsDeletingLogs(true);
+    setLogsError(null);
+    try {
+      const response = await fetch("/api/research-logs", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmToken: confirmation })
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setLogsError(payload.message ?? "全削除に失敗しました。");
+        return;
+      }
+      setLogs([]);
+    } catch {
+      setLogsError("全削除に失敗しました。再試行してください。");
+    } finally {
+      setIsDeletingLogs(false);
+    }
   }
 
   return (
@@ -286,8 +349,8 @@ export function StudioApp() {
                         ))}
                       </div>
                     </div>
-                    <Button variant="primary" isDisabled={!analysis} onPress={saveLog}>
-                      ログを保存
+                    <Button variant="primary" isDisabled={!analysis || isLogSaving} onPress={saveLog}>
+                      {isLogSaving ? "保存中..." : "ログを保存"}
                     </Button>
                   </Card.Content>
                 </Card>
@@ -353,12 +416,22 @@ export function StudioApp() {
               <Card>
                 <Card.Header className="flex justify-between">
                   <h3 className="text-xl font-black">保存済みログ</h3>
-                  <Button variant="danger-soft" isDisabled={!logs.length} onPress={() => setLogs([])}>
+                  <Button variant="danger-soft" isDisabled={!logs.length || isDeletingLogs} onPress={deleteAllLogs}>
                     全削除
                   </Button>
                 </Card.Header>
                 <Card.Content>
-                  {logs.length ? (
+                  {logsError ? (
+                    <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2">
+                      <p className="text-sm text-danger-700">{logsError}</p>
+                      <Button variant="outline" size="sm" onPress={fetchLogs}>
+                        再試行
+                      </Button>
+                    </div>
+                  ) : null}
+                  {isLogsLoading ? (
+                    <EmptyText>ログを読み込み中です。</EmptyText>
+                  ) : logs.length ? (
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[720px] text-left text-sm">
                         <thead className="border-b border-default-200 text-default-500">

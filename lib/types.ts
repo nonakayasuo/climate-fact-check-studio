@@ -75,3 +75,21 @@ export type ResearchLog = {
   human_revision: string;
   revision_reason: string[];
 };
+
+export type ResearchLogInput = Omit<ResearchLog, "id" | "timestamp"> & {
+  id?: string;
+  timestamp?: string;
+};
+
+export type ResearchLogErrorCode =
+  | "CONFIG_MISSING"
+  | "DB_UNAVAILABLE"
+  | "SCHEMA_MISMATCH"
+  | "DELETE_CONFIRMATION_REQUIRED"
+  | "VALIDATION_ERROR";
+
+export type ResearchLogApiError = {
+  code: ResearchLogErrorCode;
+  message: string;
+  retryable: boolean;
+};
