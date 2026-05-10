@@ -1,11 +1,21 @@
 # Climate Fact-Check Studio
 
-気候変動報道向けのAIファクトチェック支援基盤です。共有チャットの構想をもとに、まずは研究プロトタイプとして「入力、主張抽出、リスク判定、編集支援メモ、人間評価、監査ログ、CSV出力」までをローカルで動かせる形にしています。
+気候変動報道向けのAIファクトチェック支援基盤です。共有チャットの構想をもとに、研究プロトタイプとして「入力、主張抽出、リスク判定、編集支援メモ、人間評価、監査ログ、CSV出力」までをNext.jsアプリとして動かせる形にしています。
+
+## 技術構成
+
+- Next.js App Router
+- TypeScript
+- Tailwind CSS v4
+- HeroUI v3
+- Bun
+- localStorage
+- Supabase schema draft
 
 ## 現在のMVP
 
 - 記事・SNS投稿・見出しの入力
-- 主張抽出のルールベース試作
+- `/api/analyze` による主張抽出のルールベース試作
 - 断定表現、根拠不足、気象と気候の混同などのリスク判定
 - IPCC、気象庁、環境省、国立環境研究所の根拠候補表示
 - 編集者向け確認メモ生成
@@ -17,10 +27,18 @@
 ## 起動
 
 ```bash
-npm run dev
+bun install
+bun run dev
 ```
 
-ブラウザで `http://localhost:4173` を開きます。依存関係はありません。
+ブラウザで `http://localhost:3000` を開きます。
+
+## 検証
+
+```bash
+bun run typecheck
+bun run build
+```
 
 ## 研究データ項目
 
@@ -48,12 +66,3 @@ CSVには以下を出力します。
 3. 根拠資料PDF/URL登録と簡易RAG
 4. A/B出力比較実験
 5. 条件別ダッシュボードと評価統計
-
-## GitHub連携メモ
-
-この環境ではGitHub Appで既存リポジトリ操作は可能ですが、新規リポジトリ作成APIが露出していません。`gh` CLIの認証を直した後、以下でリモート作成とpushができます。
-
-```bash
-gh auth login -h github.com
-gh repo create nonakayasuo/climate-fact-check-studio --private --source=. --remote=origin --push
-```
