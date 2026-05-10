@@ -1,0 +1,10 @@
+{
+  "name": "climate-fact-check-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Research prototype for Japanese climate journalism fact-check assistance.",
+  "scripts": {
+    "dev": "python3 -m http.server 4173",
+    "start": "python3 -m http.server 4173"
+  }
+}
