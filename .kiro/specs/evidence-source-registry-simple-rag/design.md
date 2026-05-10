@@ -76,7 +76,7 @@ graph TD
 | Frontend | React 19 / HeroUI v3 | 資料登録 UI、アラート表示、出典紐づけ表示 | 既存 `StudioApp` を拡張 |
 | Backend | Next.js 16 Route Handler | 分析 API 契約受け口 | `/api/analyze` 契約維持 |
 | Domain | TypeScript 5.9 strict | 主張抽出、資料照合、参照箇所候補、アラート判定 | `any` 不使用 |
-| Data | Static seed + localStorage | 権威ソース維持とユーザー登録資料保持 | MVP の段階導入 |
+| Data | Static seed + Supabase | 権威ソース維持と共有レジストリの永続化 | `research_logs` と同方針で `fact_check_evidence_sources` テーブルを利用 |
 | Runtime | Bun | 既存実行環境 | 追加基盤なし |
 
 ## File Structure Plan
@@ -99,18 +99,27 @@ lib/
 ├── evidence-registry.ts                     # 登録資料のバリデーションと統合取得契約
 ├── evidence-matcher.ts                      # 主張×資料の関連度算出と候補生成
 ├── citation-locator.ts                      # 参照箇所候補の抽出・確度判定
-└── evidence-gap.ts                          # 根拠不足判定と優先確認スコア算出
+├── evidence-gap.ts                          # 根拠不足判定と優先確認スコア算出
+└── evidence-source-repository.ts            # Supabase 永続化レイヤ
 
 data/
 └── evidence-sources.ts                      # 権威ソースのシードカタログ（読み取り専用）
+
+docs/
+├── supabase-schema.sql                      # fact_check_evidence_sources を追加
+└── supabase-operations.md                   # 共有レジストリの運用手順を追記
 ```
 
 ### Modified Files
 - `lib/types.ts` — 根拠資料登録エンティティ、主張-出典リンク、根拠不足アラート型を追加する。
 - `lib/analysis.ts` — 主張単位の候補検索・参照箇所候補・アラート生成フローを統合する。
+- `lib/openai-analysis/mapper.ts` — 編集メモ末尾に主張別出典と根拠不足サマリを差し込む。
 - `components/studio-app.tsx` — 資料登録操作と主張別の根拠表示を追加する。
 - `app/api/analyze/route.ts` — 拡張された `AnalysisRequest`/`AnalysisResult` の検証と返却を維持する。
 - `data/evidence-sources.ts` — シード資料に必要なメタ項目を補完する（既存責務は維持）。
+
+### Storage Decision Update (2026-05-10)
+当初の設計では MVP の保存責務を localStorage 主体としていたが、実装段階で `research_logs` が Supabase 永続化に移行済みであることを踏まえ、共有性・後段集計の容易さを優先して **Supabase の `fact_check_evidence_sources` テーブル**へ統合した。`EvidenceRegistryEntry` のフィールドは Supabase 列名と一致する snake_case（`source_type`, `registered_at`, `updated_at` 等）で固定し、Repository 層は `lib/research-log-repository.ts` と同じパターンで実装している。
 
 ## System Flows
 
@@ -279,7 +288,9 @@ interface EvidenceRegistryService {
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
 | POST | /api/analyze | AnalysisRequestExtended | AnalysisResultExtended | 400, 500 |
-| POST | /api/evidence-sources | EvidenceRegistryEntry | RegistryResult | 400, 409, 500 |
+| GET  | /api/evidence-sources | (query: includeInactive) | `{ sources: EvidenceRegistryEntry[] }` | 500, 503 |
+| POST | /api/evidence-sources | EvidenceRegistryInput | `{ source: EvidenceRegistryEntry }` | 400, 409, 500, 503 |
+| PATCH | /api/evidence-sources/[id] | `{ status }` | `{ source: EvidenceRegistryEntry }` | 400, 404, 503 |
 
 ## Data Models
 

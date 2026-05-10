@@ -5,11 +5,36 @@ import type { Key, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { evidenceSources } from "@/data/evidence-sources";
 import { logsToCsv } from "@/lib/csv";
-import type { AnalysisResult, MediaType, ResearchLog, Topic } from "@/lib/types";
+import type {
+  AnalysisResult,
+  ClaimEvidenceLink,
+  EvidenceRegistryEntry,
+  EvidenceSourceType,
+  GapAlert,
+  MediaType,
+  ResearchLog,
+  Topic
+} from "@/lib/types";
 
 const topics: Topic[] = ["猛暑", "豪雨", "脱炭素", "再エネ", "原発", "気候政策"];
 const mediaTypes: MediaType[] = ["新聞記事", "Web記事", "SNS投稿", "見出し"];
+const sourceTypes: EvidenceSourceType[] = ["url", "pdf", "report", "dataset"];
 const revisionReasons = ["根拠不足", "表現が断定的", "文脈を誤解", "出典が不適切", "役に立ったが要調整"];
+
+const gapSeverityColor: Record<GapAlert["severity"], "danger" | "warning" | "default"> = {
+  high: "danger",
+  medium: "warning",
+  low: "default"
+};
+
+const initialRegistryDraft = {
+  title: "",
+  owner: "",
+  url: "",
+  source_type: "url" as EvidenceSourceType,
+  themes: [] as Topic[],
+  note: ""
+};
 
 const sampleArticle = {
   title: "今年の猛暑はすべて地球温暖化が原因なのか",
@@ -36,9 +61,16 @@ export function StudioApp() {
   const [isLogsLoading, setIsLogsLoading] = useState(true);
   const [isLogSaving, setIsLogSaving] = useState(false);
   const [isDeletingLogs, setIsDeletingLogs] = useState(false);
+  const [evidenceRegistry, setEvidenceRegistry] = useState<EvidenceRegistryEntry[]>([]);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [isRegistryLoading, setIsRegistryLoading] = useState(true);
+  const [isRegistrySaving, setIsRegistrySaving] = useState(false);
+  const [registryDraft, setRegistryDraft] = useState(initialRegistryDraft);
+  const [pendingStatusId, setPendingStatusId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchLogs();
+    void fetchEvidenceRegistry();
   }, []);
 
   const averageTrust = logs.length
@@ -48,6 +80,9 @@ export function StudioApp() {
   const ratingSummary = useMemo(() => summarizeRatings(logs), [logs]);
   const reasonSummary = useMemo(() => countBy(logs.flatMap((log) => log.revision_reason)), [logs]);
   const topicSummary = useMemo(() => countBy(logs.map((log) => log.topic)), [logs]);
+  const linksByClaim = useMemo(() => groupClaimEvidenceLinks(analysis?.claimEvidenceLinks), [analysis]);
+  const gapAlerts = analysis?.gapAlerts ?? [];
+  const activeRegistryCount = evidenceRegistry.filter((entry) => entry.status === "active").length;
 
   async function analyzeArticle() {
     if (!body.trim()) return;
@@ -58,7 +93,13 @@ export function StudioApp() {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, mediaType, topic, body })
+        body: JSON.stringify({
+          title,
+          mediaType,
+          topic,
+          body,
+          registeredSources: evidenceRegistry
+        })
       });
 
       if (!response.ok) {
@@ -157,6 +198,90 @@ export function StudioApp() {
     URL.revokeObjectURL(url);
   }
 
+  async function fetchEvidenceRegistry() {
+    setIsRegistryLoading(true);
+    setRegistryError(null);
+    try {
+      const response = await fetch("/api/evidence-sources?includeInactive=1");
+      const payload = (await response.json()) as { sources?: EvidenceRegistryEntry[]; message?: string };
+      if (!response.ok) {
+        setRegistryError(payload.message ?? "登録資料の取得に失敗しました。");
+        return;
+      }
+      setEvidenceRegistry(payload.sources ?? []);
+    } catch {
+      setRegistryError("登録資料の取得に失敗しました。再試行してください。");
+    } finally {
+      setIsRegistryLoading(false);
+    }
+  }
+
+  async function submitEvidenceSource() {
+    if (!registryDraft.title.trim() || !registryDraft.owner.trim() || !registryDraft.url.trim()) {
+      setRegistryError("タイトル / 出典元 / URL は必須です。");
+      return;
+    }
+    setIsRegistrySaving(true);
+    setRegistryError(null);
+    try {
+      const response = await fetch("/api/evidence-sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: registryDraft })
+      });
+      const payload = (await response.json()) as {
+        source?: EvidenceRegistryEntry;
+        message?: string;
+      };
+      if (!response.ok || !payload.source) {
+        setRegistryError(payload.message ?? "登録に失敗しました。入力を確認してください。");
+        return;
+      }
+      setEvidenceRegistry((current) => [payload.source as EvidenceRegistryEntry, ...current]);
+      setRegistryDraft(initialRegistryDraft);
+    } catch {
+      setRegistryError("登録に失敗しました。ネットワーク接続を確認してください。");
+    } finally {
+      setIsRegistrySaving(false);
+    }
+  }
+
+  async function toggleEvidenceStatus(entry: EvidenceRegistryEntry) {
+    const nextStatus = entry.status === "active" ? "inactive" : "active";
+    setPendingStatusId(entry.id);
+    setRegistryError(null);
+    try {
+      const response = await fetch(`/api/evidence-sources/${entry.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      const payload = (await response.json()) as {
+        source?: EvidenceRegistryEntry;
+        message?: string;
+      };
+      if (!response.ok || !payload.source) {
+        setRegistryError(payload.message ?? "状態更新に失敗しました。");
+        return;
+      }
+      setEvidenceRegistry((current) =>
+        current.map((item) => (item.id === entry.id ? (payload.source as EvidenceRegistryEntry) : item))
+      );
+    } catch {
+      setRegistryError("状態更新に失敗しました。再試行してください。");
+    } finally {
+      setPendingStatusId(null);
+    }
+  }
+
+  function toggleDraftTheme(theme: Topic) {
+    setRegistryDraft((current) => {
+      const exists = current.themes.includes(theme);
+      const themes = exists ? current.themes.filter((item) => item !== theme) : [...current.themes, theme];
+      return { ...current, themes };
+    });
+  }
+
   async function deleteAllLogs() {
     if (!logs.length || isDeletingLogs) return;
     const confirmation = window.prompt(
@@ -192,10 +317,12 @@ export function StudioApp() {
           <p className="text-xs font-bold uppercase text-emerald-300">Climate Fact-Check Studio</p>
           <h1 className="mt-2 text-3xl font-black leading-tight">気候変動報道のためのAI編集支援基盤</h1>
 
-          <div className="mt-8 grid grid-cols-3 gap-3 lg:mt-12 lg:grid-cols-1">
+          <div className="mt-8 grid grid-cols-2 gap-3 lg:mt-12 lg:grid-cols-1">
             <Metric label="sessions" value={String(logs.length)} />
             <Metric label="avg trust" value={averageTrust} />
             <Metric label="risk alerts" value={riskCount ? String(riskCount) : "-"} />
+            <Metric label="evidence gaps" value={gapAlerts.length ? String(gapAlerts.length) : "-"} />
+            <Metric label="active sources" value={String(activeRegistryCount)} />
           </div>
         </aside>
 
@@ -264,12 +391,29 @@ export function StudioApp() {
                   <ResultCard title="抽出された主張" count={analysis?.claims.length ?? 0}>
                     {analysis?.claims.length ? (
                       <div className="grid gap-3">
-                        {analysis.claims.map((claim, index) => (
-                          <div key={claim} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-lg border border-default-200 bg-default-50 p-3">
-                            <b className="text-emerald-700">{index + 1}</b>
-                            <p>{claim}</p>
-                          </div>
-                        ))}
+                        {analysis.claims.map((claim, index) => {
+                          const claimLinks = linksByClaim.get(claim) ?? [];
+                          return (
+                            <div
+                              key={claim}
+                              className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-lg border border-default-200 bg-default-50 p-3"
+                            >
+                              <b className="text-emerald-700">{index + 1}</b>
+                              <div className="grid gap-2">
+                                <p>{claim}</p>
+                                {claimLinks.length ? (
+                                  <div className="grid gap-2">
+                                    {claimLinks.map((link) => (
+                                      <ClaimEvidenceCard key={link.sourceId} link={link} />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-default-500">関連資料候補は見つかりませんでした。</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <EmptyText>分析すると主張が表示されます。</EmptyText>
@@ -293,6 +437,30 @@ export function StudioApp() {
                     )}
                   </ResultCard>
                 </div>
+
+                <ResultCard title="根拠不足アラート" count={gapAlerts.length}>
+                  {gapAlerts.length ? (
+                    <div className="grid gap-3">
+                      {gapAlerts.map((alert) => (
+                        <div
+                          key={alert.claimId}
+                          className="rounded-lg border border-default-200 bg-white p-3"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Chip color={gapSeverityColor[alert.severity]} variant="soft">
+                              {alert.severity.toUpperCase()}
+                            </Chip>
+                            <small className="text-default-500">優先度 {alert.priority}</small>
+                          </div>
+                          <p className="mt-2 text-sm font-bold text-default-700">{alert.claimText}</p>
+                          <p className="mt-1 text-xs text-default-500">{alert.guidance}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyText>分析後、根拠不足の主張がここに表示されます。</EmptyText>
+                  )}
+                </ResultCard>
 
                 <Card>
                   <Card.Header className="flex justify-between">
@@ -358,33 +526,211 @@ export function StudioApp() {
             </Tabs.Panel>
 
             <Tabs.Panel id="evidence" className="mt-5">
-              <div className="grid gap-4">
-                {(analysis?.sources ?? evidenceSources).map((source) => (
-                  <Card key={source.name}>
-                    <Card.Content className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <p className="text-xs font-bold uppercase text-emerald-700">{source.owner}</p>
-                        <h3 className="text-xl font-black">{source.name}</h3>
-                        <p className="mt-2 text-default-600">{source.note}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {source.themes.map((sourceTheme) => (
-                            <Chip key={sourceTheme} variant="soft">
-                              {sourceTheme}
-                            </Chip>
+              <div className="grid gap-5">
+                <Card>
+                  <Card.Header className="block">
+                    <p className="text-xs font-bold uppercase text-emerald-700">Evidence Registry</p>
+                    <h3 className="text-xl font-black">根拠資料を登録する</h3>
+                    <small className="text-default-500">
+                      登録した PDF / URL は分析時に主張ごとの照合候補と参照箇所候補に使われます。
+                    </small>
+                  </Card.Header>
+                  <Card.Content className="grid gap-4">
+                    {registryError ? (
+                      <p className="rounded-lg border border-danger-300 bg-danger-50 px-3 py-2 text-sm text-danger-700">
+                        {registryError}
+                      </p>
+                    ) : null}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FieldLabel label="タイトル">
+                        <input
+                          className={fieldClassName}
+                          value={registryDraft.title}
+                          onChange={(event) =>
+                            setRegistryDraft((current) => ({ ...current, title: event.target.value }))
+                          }
+                        />
+                      </FieldLabel>
+                      <FieldLabel label="出典元 (owner)">
+                        <input
+                          className={fieldClassName}
+                          value={registryDraft.owner}
+                          onChange={(event) =>
+                            setRegistryDraft((current) => ({ ...current, owner: event.target.value }))
+                          }
+                        />
+                      </FieldLabel>
+                      <FieldLabel label="URL">
+                        <input
+                          className={fieldClassName}
+                          value={registryDraft.url}
+                          placeholder="https://example.org/report.pdf"
+                          onChange={(event) =>
+                            setRegistryDraft((current) => ({ ...current, url: event.target.value }))
+                          }
+                        />
+                      </FieldLabel>
+                      <FieldLabel label="種別">
+                        <select
+                          className={fieldClassName}
+                          value={registryDraft.source_type}
+                          onChange={(event) =>
+                            setRegistryDraft((current) => ({
+                              ...current,
+                              source_type: event.target.value as EvidenceSourceType
+                            }))
+                          }
+                        >
+                          {sourceTypes.map((type) => (
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
                           ))}
-                        </div>
+                        </select>
+                      </FieldLabel>
+                    </div>
+                    <FieldLabel label="ノート">
+                      <textarea
+                        className={fieldClassName}
+                        rows={3}
+                        value={registryDraft.note}
+                        placeholder="どの主張の検証に使えるか、引用ポイントなどを書いておくと照合精度が上がります。"
+                        onChange={(event) =>
+                          setRegistryDraft((current) => ({ ...current, note: event.target.value }))
+                        }
+                      />
+                    </FieldLabel>
+                    <div className="grid gap-2">
+                      <span className="text-sm font-bold text-default-600">テーマ（複数選択可）</span>
+                      <div className="flex flex-wrap gap-2">
+                        {topics.map((theme) => {
+                          const selected = registryDraft.themes.includes(theme);
+                          return (
+                            <button
+                              key={theme}
+                              type="button"
+                              onClick={() => toggleDraftTheme(theme)}
+                              className={`rounded-lg border px-3 py-1 text-sm transition ${
+                                selected
+                                  ? "border-emerald-700 bg-emerald-700 text-white"
+                                  : "border-default-200 bg-white text-default-700"
+                              }`}
+                            >
+                              {theme}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <a
-                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-default-300 px-4 text-sm font-bold"
-                        href={source.url}
-                        target="_blank"
-                        rel="noreferrer"
+                    </div>
+                    <div className="flex justify-end">
+                      <Button variant="primary" isDisabled={isRegistrySaving} onPress={submitEvidenceSource}>
+                        {isRegistrySaving ? "登録中..." : "登録する"}
+                      </Button>
+                    </div>
+                  </Card.Content>
+                </Card>
+
+                <Card>
+                  <Card.Header className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase text-emerald-700">Registered</p>
+                      <h3 className="text-xl font-black">登録済み根拠資料</h3>
+                    </div>
+                    <Button variant="outline" size="sm" onPress={fetchEvidenceRegistry}>
+                      再読込
+                    </Button>
+                  </Card.Header>
+                  <Card.Content className="grid gap-3">
+                    {isRegistryLoading ? (
+                      <EmptyText>登録資料を読み込み中です。</EmptyText>
+                    ) : evidenceRegistry.length ? (
+                      evidenceRegistry.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className={`flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-start md:justify-between ${
+                            entry.status === "active"
+                              ? "border-default-200 bg-white"
+                              : "border-default-200 bg-default-100/60"
+                          }`}
+                        >
+                          <div>
+                            <p className="text-xs font-bold uppercase text-emerald-700">
+                              {entry.owner} ・ {entry.source_type}
+                            </p>
+                            <h4 className="text-base font-black">{entry.title}</h4>
+                            {entry.note ? <p className="mt-1 text-sm text-default-600">{entry.note}</p> : null}
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {entry.themes.map((theme) => (
+                                <Chip key={theme} variant="soft">
+                                  {theme}
+                                </Chip>
+                              ))}
+                              <Chip color={entry.status === "active" ? "success" : "default"} variant="soft">
+                                {entry.status}
+                              </Chip>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2 md:items-end">
+                            <a
+                              className="inline-flex min-h-9 items-center justify-center rounded-lg border border-default-300 px-3 text-sm font-bold"
+                              href={entry.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              開く
+                            </a>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              isDisabled={pendingStatusId === entry.id}
+                              onPress={() => toggleEvidenceStatus(entry)}
+                            >
+                              {entry.status === "active" ? "無効化" : "有効化"}
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyText>まだ登録された根拠資料はありません。</EmptyText>
+                    )}
+                  </Card.Content>
+                </Card>
+
+                <Card>
+                  <Card.Header className="block">
+                    <p className="text-xs font-bold uppercase text-emerald-700">Seed Catalog</p>
+                    <h3 className="text-xl font-black">権威ソース（読み取り専用）</h3>
+                  </Card.Header>
+                  <Card.Content className="grid gap-3">
+                    {evidenceSources.map((source) => (
+                      <div
+                        key={source.name}
+                        className="flex flex-col gap-3 rounded-lg border border-default-200 bg-white p-3 md:flex-row md:items-start md:justify-between"
                       >
-                        開く
-                      </a>
-                    </Card.Content>
-                  </Card>
-                ))}
+                        <div>
+                          <p className="text-xs font-bold uppercase text-emerald-700">{source.owner}</p>
+                          <h4 className="text-base font-black">{source.name}</h4>
+                          <p className="mt-1 text-sm text-default-600">{source.note}</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {source.themes.map((theme) => (
+                              <Chip key={theme} variant="soft">
+                                {theme}
+                              </Chip>
+                            ))}
+                          </div>
+                        </div>
+                        <a
+                          className="inline-flex min-h-9 items-center justify-center rounded-lg border border-default-300 px-3 text-sm font-bold"
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          開く
+                        </a>
+                      </div>
+                    ))}
+                  </Card.Content>
+                </Card>
               </div>
             </Tabs.Panel>
 
@@ -574,4 +920,47 @@ function countBy(items: string[]) {
     if (item) counts[item] = (counts[item] ?? 0) + 1;
     return counts;
   }, {});
+}
+
+function groupClaimEvidenceLinks(links: ClaimEvidenceLink[] | undefined): Map<string, ClaimEvidenceLink[]> {
+  const map = new Map<string, ClaimEvidenceLink[]>();
+  if (!links) return map;
+  for (const link of links) {
+    const bucket = map.get(link.claimText) ?? [];
+    bucket.push(link);
+    map.set(link.claimText, bucket);
+  }
+  return map;
+}
+
+function ClaimEvidenceCard({ link }: { link: ClaimEvidenceLink }) {
+  return (
+    <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip color="success" variant="soft">
+          {link.sourceOwner}
+        </Chip>
+        <span className="font-bold">{link.sourceTitle}</span>
+        <a className="underline" href={link.sourceUrl} target="_blank" rel="noreferrer">
+          開く
+        </a>
+        <small className="text-default-500">score {link.score}</small>
+      </div>
+      {link.citations.length ? (
+        <ul className="mt-2 grid gap-1">
+          {link.citations.map((citation, index) => (
+            <li key={`${link.sourceId}-${index}`} className="flex items-start gap-2 text-default-700">
+              <Chip color={citation.estimated ? "warning" : "success"} variant="soft" size="sm">
+                {citation.estimated ? "推定" : "確度"}
+                {citation.confidence}
+              </Chip>
+              <span>{citation.text}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-default-500">参照箇所候補は抽出できませんでした。</p>
+      )}
+    </div>
+  );
 }

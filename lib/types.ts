@@ -22,11 +22,46 @@ export type AnalysisRequest = {
   body: string;
 };
 
+export type CitationCandidate = {
+  text: string;
+  confidence: number;
+  estimated: boolean;
+};
+
+export type ClaimEvidenceLink = {
+  claimId: string;
+  claimText: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceOwner: string;
+  sourceUrl: string;
+  score: number;
+  citations: CitationCandidate[];
+};
+
+export type GapAlertReason =
+  | "no_source"
+  | "low_confidence_only"
+  | "inactive_only";
+
+export type GapAlertSeverity = "low" | "medium" | "high";
+
+export type GapAlert = {
+  claimId: string;
+  claimText: string;
+  severity: GapAlertSeverity;
+  priority: number;
+  reason: GapAlertReason;
+  guidance: string;
+};
+
 export type AnalysisResult = AnalysisRequest & {
   claims: string[];
   risks: Risk[];
   sources: EvidenceSource[];
   memo: string;
+  claimEvidenceLinks?: ClaimEvidenceLink[];
+  gapAlerts?: GapAlert[];
 };
 
 export type StructuredAnalysisRisk = {
@@ -56,6 +91,48 @@ export type AnalysisError = {
   retryable: boolean;
   status: number;
   details?: string;
+};
+
+export type EvidenceSourceType = "url" | "pdf" | "report" | "dataset";
+
+export type EvidenceSourceStatus = "active" | "inactive";
+
+export type EvidenceRegistryEntry = {
+  id: string;
+  title: string;
+  owner: string;
+  url: string;
+  source_type: EvidenceSourceType;
+  themes: Topic[];
+  note: string;
+  status: EvidenceSourceStatus;
+  registered_at: string;
+  updated_at: string;
+};
+
+export type EvidenceRegistryInput = Omit<
+  EvidenceRegistryEntry,
+  "id" | "status" | "registered_at" | "updated_at"
+> & {
+  id?: string;
+  status?: EvidenceSourceStatus;
+  registered_at?: string;
+  updated_at?: string;
+};
+
+export type EvidenceRegistryErrorCode =
+  | "CONFIG_MISSING"
+  | "DB_UNAVAILABLE"
+  | "SCHEMA_MISMATCH"
+  | "VALIDATION_ERROR"
+  | "EVIDENCE_DUPLICATE"
+  | "EVIDENCE_INVALID_URL"
+  | "EVIDENCE_NOT_FOUND";
+
+export type EvidenceRegistryApiError = {
+  code: EvidenceRegistryErrorCode;
+  message: string;
+  retryable: boolean;
 };
 
 export type ResearchLog = {

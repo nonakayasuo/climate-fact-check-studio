@@ -23,8 +23,13 @@ Next.js App Router の規約に従いつつ、**「UI / ドメインロジック
 **用途**: 副作用のない純粋関数と型定義。サーバ・クライアント双方から import される共通レイヤ。外部 I/O（`fetch`、DB、`window` API）は置かない。
 **例**:
 - `lib/types.ts` 全ドメイン型の SSOT
-- `lib/analysis.ts` 主張抽出・リスク判定・メモ生成のルールベース実装
+- `lib/analysis.ts` OpenAI 分析と根拠資料照合・参照箇所候補・根拠不足判定のオーケストレーション
 - `lib/csv.ts` `ResearchLog` を CSV 文字列に変換
+- `lib/evidence-registry.ts` URL 正規化・重複判定・シード+登録資料の統合（純粋関数）
+- `lib/evidence-matcher.ts` 主張テキストと資料のルールベーススコアリング
+- `lib/citation-locator.ts` 参照箇所候補と確度算出（推定フラグ付与）
+- `lib/evidence-gap.ts` 根拠不足アラートと優先度付与（真偽断定なし）
+- `lib/evidence-source-repository.ts` Supabase `fact_check_evidence_sources` の永続化境界
 
 ### 静的シードデータ
 **場所**: `data/`
