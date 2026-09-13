@@ -1,8 +1,8 @@
-# Climate Fact-Check Studio Plans.md（子レイヤ / 作戦会議室）
+# Climate Fact-Check Studio Plans.md（作戦会議室）
 
 最終更新: 2026-06-19
 
-> **2 層構成**: 上位（全体俯瞰・判断基準）= [../Plans.md](../Plans.md)。ここはこのリポジトリの「今回だけのこと」。
+> **位置づけ**: このリポジトリの「今回だけのこと」（目的・成功条件・進捗）。横断の判断基準は [yasuo_life の decisions.md](../yasuo_life/.claude/memory/decisions.md)。
 > **接続先**: プロジェクト方針 → [docs/steering/](docs/steering/)（product / structure / tech）、機能仕様 → [docs/specs/](docs/specs/)、Supabase 運用 → [docs/supabase-operations.md](docs/supabase-operations.md)。
 > **研究文脈**: 博士研究「気候変動 × 情報環境（CSS）」のプロトタイプ基盤（進路: 朝日新聞 → 東京科学大 MOT 2027/4 → 博士）。
 > ℹ️ 旧 `.kiro` 運用は廃止。steering / specs は `docs/` に移し、進捗追跡は本 Plans.md に一本化。
